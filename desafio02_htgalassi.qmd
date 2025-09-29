@@ -1,0 +1,311 @@
+---
+title: "Desafio 02 - REDES NEURAIS ARTIFICIAIS (APRENDIZADO PROFUNDO)"
+author: "Hanna Tatsuta Galassi"
+date: "2025-09-27"
+format:
+  pdf:
+    documentclass: article
+    toc: true
+    number-sections: true
+    colorlinks: true
+    geometry:
+      - margin=1in
+    echo: false
+    warning: false
+    standalone: true
+---
+
+```{python}
+import warnings
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import KFold
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import StandardScaler
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+```
+
+```{python}
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*retracing.*')
+tf.keras.utils.disable_interactive_logging()
+```
+
+```{python}
+def build_ann_model(
+    hidden_layers_topology: list,
+    activation_function: str = 'relu',
+    optimizer_algo: str = 'adam',
+    loss_function: str = 'mse'
+):
+    """
+    Constrói e compila um modelo de rede neural para regressão com topologia
+    e hiperparâmetros de treinamento customizáveis.
+
+    Args:
+        hidden_layers_topology (list): Lista de inteiros representando o número
+            de neurônios em cada camada oculta (e.g., [64, 32]).
+        activation_function (str): Nome da função de ativação para as camadas
+            ocultas (e.g., 'relu', 'tanh'). Padrão: 'relu'.
+        optimizer_algo (str): Nome do algoritmo otimizador (e.g., 'adam', 
+            'sgd'). Padrão: 'adam'.
+        loss_function (str): Nome da função de perda para regressão (e.g.,
+            'mse', 'mae'). Padrão: 'mse'.
+
+    Retorna:
+        tf.keras.Model: O modelo Keras compilado.
+    """
+    
+    if not hidden_layers_topology:
+        raise ValueError(
+            "A topologia de camadas ocultas deve ser uma lista não vazia de " +
+            "tamanhos de camada.")
+
+    # Inicializa o modelo com a primeira camada oculta (que define o input_shape)
+    model = Sequential([
+        Dense(
+            hidden_layers_topology[0],
+            activation=activation_function,
+            input_shape=(n_features,)),
+    ])
+
+    # Adiciona as camadas ocultas restantes
+    for units in hidden_layers_topology[1:]:
+        model.add(Dense(units, activation=activation_function))
+
+    # Camada de Saída (Regressão Linear)
+    model.add(Dense(1, activation='linear'))
+
+    # Compilação do modelo com os hiperparâmetros fornecidos
+    model.compile(optimizer=optimizer_algo, loss=loss_function)
+    
+    return model
+
+def calculate_metrics(model_results):
+    """
+    Calcula o RMSE médio da validação cruzada e o RMSE do ajuste completo.
+    """
+    rmse_cv = np.mean(model_results['rmse_folds'])
+    rmse_fit = np.sqrt(
+      mean_squared_error(
+        model_results['targets'], model_results['predictions']))
+    return rmse_cv, rmse_fit
+
+
+def plot_results(model_name, targets, predictions, rmse):
+    """
+    Plota os valores observados vs. previstos com uma linha de 45 graus.
+    """
+    plt.figure(figsize=(6, 6))
+    plt.scatter(targets, predictions, alpha=0.6, s=15, color='darkblue')
+    max_val = max(targets.max(), predictions.max())
+    min_val = min(targets.min(), predictions.min())
+    
+    # Garantir que a linha de 45 graus cubra o intervalo de dados
+    plot_min = min(min_val, 0) * 0.95
+    plot_max = max_val * 1.05
+    
+    plt.plot([plot_min, plot_max], [plot_min, plot_max], '--r', linewidth=2, label='Identidade')
+    plt.title(f'DEC_MED Observado vs. Previsto: {model_name}')
+    plt.xlabel('DEC_MED Observado (horas)')
+    plt.ylabel('DEC_MED Previsto (horas)')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend()
+    plt.show()
+```
+
+```{python}
+df = pd.read_excel("BaseDados_DEC.xlsx")
+```
+
+# Introdução
+O objetivo deste exercício é comparar a capacidade preditiva de três diferentes modelos de regressão na modelagem do indicador DEC_MED (Duração Equivalente de Interrupção por Unidade Consumidora), utilizando dados da base BaseDados_DEC.xlsx.
+
+```{python}
+cols_to_drop = ["COD_CONJ", "CONJ"]
+target_var = ["DEC_MED"]
+
+df_clean = df.dropna()
+print(f"A base de dados original possui {df.shape[0]} amostras.")
+print(
+  f"Após a remoção de linhas com valores faltantes, restaram " +
+  f"{df_clean.shape[0]} observações.")
+```
+
+```{python}
+X = df_clean.drop(cols_to_drop+target_var, axis=1).values
+y = df_clean[target_var].values.flatten()
+```
+
+A variável alvo é `DEC_MED`, e as variáveis preditoras compreendem as 133 colunas que variam de `AREA` a `ENE_PNI`.
+
+```{python}
+n_features = X.shape[1]
+```
+
+## Modelos avaliados
+1. Regressão Linear (`sklearn.linear_model.LinearRegression`)
+2. Random Forest (`sklearn.ensemble.RandomForestRegressor`)
+3. Redes Neurais Artificiais (`tensorflow.keras`)
+
+
+## Métrica de qualidade do ajuste
+A medida de qualidade de ajuste e capacidade preditiva utilizada é a Raiz Quadrada da Média dos Quadrados dos Erros (RMSE):
+
+$$ RMSE = \sqrt{\frac {1}{N} \sum_{i=1}^{N}{(y_{i}-\hat{y}_{i})^{2}}} $$
+
+Em particular, a capacidade preditiva é avaliada pelo $S_{pred}$, que é a média do RMSE nos conjuntos de teste de um procedimento de Validação Cruzada K-Fold (K=5).
+
+
+# Metodologia
+
+## Pré-processamento dos dados
+1. Linhas com valores faltantes foram removidas.
+2. Padronização de X: As 133 variáveis preditoras foram padronizadas (média = 0, desvio padrão = 1) usando StandardScaler para otimizar o treinamento da Rede Neural.
+3. Padronização de $y$: Para o modelo de Redes Neurais, a variável alvo (`DEC_MED`) também foi padronizada em cada fold de treinamento. As previsões foram invertidas para a escala original antes do cálculo do erro.
+
+## Configurações dos modelos
+| Modelo | Configurações |
+| :--- | :--- |
+| Regressão linear (RL) | Modelo padrão LinearRegression |
+| Random Forest (RF) | 100 estimadores (`n_estimators=100`), `random_state=42` |
+| RNA (Keras) | Topologia: [64, 32] (duas camadas ocultas).  Ativação: `ReLU`. Otimizador: `adam`. Loss: `mse`. Épocas: `500`. |
+
+```{python}
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+results = {
+    'RL': {
+      'rmse_folds': [], 'predictions': np.array([]), 'targets': np.array([])},
+    'RF': {
+      'rmse_folds': [], 'predictions': np.array([]), 'targets': np.array([])},
+    'RNA_Padr_y': {
+      'rmse_folds': [], 'predictions': np.array([]), 'targets': np.array([])}
+}
+```
+
+```{python}
+nn_topology = [64, 32, 1]
+epochs = 500
+batch_size = 32
+```
+
+```{python}
+# Loop de Validação cruzada
+for fold, (train_index, test_index) in enumerate(kf.split(X)):
+    X_train_orig, X_test_orig = X[train_index], X[test_index]
+    y_train_orig, y_test_orig = \
+        y[train_index].reshape(-1, 1), y[test_index].reshape(-1, 1)
+
+    scaler_X = StandardScaler()
+    X_train = scaler_X.fit_transform(X_train_orig)
+    X_test = scaler_X.transform(X_test_orig)
+
+    # --- MODELO 1: Regressão Linear (RL) ---
+    model_rl = LinearRegression()
+    model_rl.fit(X_train, y_train_orig.flatten())
+    y_pred_rl = model_rl.predict(X_test)
+    rmse_rl = np.sqrt(mean_squared_error(y_test_orig.flatten(), y_pred_rl))
+    results['RL']['rmse_folds'].append(rmse_rl)
+    results['RL']['predictions'] = np.append(
+      results['RL']['predictions'], y_pred_rl)
+    results['RL']['targets'] = np.append(
+      results['RL']['targets'], y_test_orig.flatten())
+
+    # --- MODELO 2: Random Forest (RF) ---
+    model_rf = RandomForestRegressor(
+        n_estimators=100, random_state=42, n_jobs=-1)
+    model_rf.fit(X_train, y_train_orig.flatten())
+    y_pred_rf = model_rf.predict(X_test)
+    rmse_rf = np.sqrt(mean_squared_error(y_test_orig.flatten(), y_pred_rf))
+    results['RF']['rmse_folds'].append(rmse_rf)
+    results['RF']['predictions'] = np.append(
+      results['RF']['predictions'], y_pred_rf)
+    results['RF']['targets'] = np.append(
+      results['RF']['targets'], y_test_orig.flatten())
+
+    # --- MODELO 3: Redes Neurais (RNA) com y PADRONIZADO ---
+    
+    # 1. Padronizar y (APENAS com base nos dados de TREINO)
+    scaler_y = StandardScaler()
+    y_train_scaled = scaler_y.fit_transform(y_train_orig)
+    
+    # 2. Treinar a RNA com y_scaled
+    model_ann = build_ann_model(nn_topology)
+    model_ann.fit(
+        X_train, y_train_scaled, epochs=epochs,
+        batch_size=batch_size, verbose=0)
+    
+    # 3. Prever a saída PADRONIZADA
+    y_pred_ann_scaled = model_ann.predict(X_test)
+    
+    # 4. Desfazer a padronização (transformar de volta à escala original)
+    y_pred_ann = scaler_y.inverse_transform(y_pred_ann_scaled).flatten()
+    
+    # 5. Calcular o RMSE na escala original
+    rmse_ann = np.sqrt(mean_squared_error(y_test_orig.flatten(), y_pred_ann))
+    results['RNA_Padr_y']['rmse_folds'].append(rmse_ann)
+    results['RNA_Padr_y']['predictions'] = np.append(
+      results['RNA_Padr_y']['predictions'], y_pred_ann)
+    results['RNA_Padr_y']['targets'] = np.append(
+      results['RNA_Padr_y']['targets'], y_test_orig.flatten())
+
+```
+
+```{python}
+rmse_rl_cv, rmse_rl_fit = calculate_metrics(results['RL'])
+rmse_rf_cv, rmse_rf_fit = calculate_metrics(results['RF'])
+rmse_ann_cv, rmse_ann_fit = calculate_metrics(results['RNA_Padr_y'])
+```
+
+# Resultados obtidos
+
+A tabela abaixo resume o desempenho preditivo e de ajuste de cada modelo, conforme calculado pelo procedimento de Validação Cruzada K=5.
+
+| Modelo | $S_{pred}$ (RMSE de validação) | RMSE de treinamento |
+| :--- | :---: | :---: |
+| Regressão linear (RL) | 28.991 | 29.128 |
+| Random Forest (RF) | 21.377 | 21.723 |
+| RNA (Keras) | 23.733 | 23.801 |
+
+1. Random Forest (RF): Demonstrou a maior capacidade preditiva com o menor erro ($S_{pred}$ = 21.377). O RF foi o modelo mais robusto e eficaz para capturar as complexas relações não-lineares presentes no conjunto de 133 preditoras.
+2. Redes Neurais (RNA): Alcançou $S_{pred}$ = 23.733. Apesar de ser um modelo mais complexo, com mais parâmetros, e que consome mais recursos computacionais, a RNA não foi capaz de superar o desempenho do modelo RF.
+3. Regressão Linear (RL): Obteve o pior resultado ($S_{pred}$ = 28.991), o que é coerente com a natureza não-linear do problema.
+
+## Análise gráfica
+
+### Regressão Linear
+O gráfico mostra a maior dispersão dos três modelos. A Regressão Linear não consegue modelar a curvatura e variabilidade dos dados, especialmente nos valores mais altos de DEC_MED, resultando em um agrupamento fraco em torno da linha de 45 graus.
+```{python}
+plot_results(
+    'Regressão Linear (RL)', results['RL']['targets'], results['RL']
+    ['predictions'], rmse_rl_cv)
+```
+
+### Random Forest
+Este gráfico exibe a melhor concentração dos pontos. A nuvem de pontos é mais estreita e segue a linha de 45 graus de perto, indicando o melhor ajuste e a superioridade do modelo RF na previsão do DEC_MED.
+```{python}
+plot_results(
+    'Random Forest (RF)', results['RF']['targets'], results['RF']
+    ['predictions'], rmse_rf_cv)
+```
+
+### RNA
+O modelo de RNA mostra uma capacidade de ajuste superior à RL, mas ainda apresenta mais dispersão (maior variância) do que o RF. A concentração dos pontos em torno da linha de 45 graus é razoável, mas a RNA não conseguiu replicar o desempenho do RF com a topologia e hiperparâmetros utilizados.
+```{python}
+plot_results(
+    'Redes Neurais (RNA) - y Padronizado', results['RNA_Padr_y']['targets'],
+    results['RNA_Padr_y']['predictions'], rmse_ann_cv)
+```
+
+# Conclusões
+O modelo Random Forest (RF) estabelece o benchmark preditivo mais alto para o indicador DEC_MED, com um $S_{pred}$ de 21.377. Este resultado enfatiza a eficácia dos métodos de ensemble baseados em árvores para lidar com a complexidade inerente de dados estruturados com alta dimensionalidade.
+
+A Rede Neural Artificial, embora metodologicamente correta e com hiperparâmetros ajustados, posiciona-se como uma alternativa robusta, mas não superior. O seu desempenho ilustra o princípio de que a estrutura algorítmica (como o ensemble do RF) pode ser mais determinante do que a capacidade teórica de representação (da RNA) quando se trata de prever relações não-lineares em bases de dados tabulares.
+
+Conclui-se que, para fins práticos de previsão do DEC_MED, o modelo Random Forest oferece o melhor equilíbrio entre precisão preditiva e eficiência de implementação.
